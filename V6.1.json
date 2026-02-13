@@ -1,0 +1,962 @@
+{
+  "name": "Documentador Automático de Flujos N8N → Notion V4",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "60ef8950-16a6-457a-88f8-7ae4a6d8278d",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        2016,
+        976
+      ]
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-pro",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        2320,
+        1152
+      ],
+      "id": "7a64456a-ff58-4c4f-aa3b-f98a044f61fc",
+      "name": "Google Gemini Chat Model3",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "cx3UREEDlLzWGGNg",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "modelName": "models/gemini-2.5-pro",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1,
+      "position": [
+        2912,
+        1312
+      ],
+      "id": "0ea5e431-afec-4f25-bb4d-f5f718fb047a",
+      "name": "Google Gemini Chat Model4",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "cx3UREEDlLzWGGNg",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyMinute"
+            }
+          ]
+        },
+        "triggerOn": "specificFolder",
+        "folderToWatch": {
+          "__rl": true,
+          "value": "TU_FOLDER_ID_AQUI",
+          "mode": "id"
+        },
+        "event": "fileCreated",
+        "options": {}
+      },
+      "id": "1199f7cb-8415-447a-9b0d-3216b63cccc7",
+      "name": "Google Drive Trigger",
+      "type": "n8n-nodes-base.googleDriveTrigger",
+      "typeVersion": 1,
+      "position": [
+        1568,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "driveId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "My Drive"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "root",
+          "cachedResultName": "/ (Root folder)"
+        },
+        "options": {}
+      },
+      "id": "9657d4ee-3a6b-4805-820e-75292898d03c",
+      "name": "Google Drive - Descargar JSON",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        1808,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "7c68877f-3647-4faf-b025-fcd53a32d3b4",
+      "name": "Extract from File",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        2048,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "merge-data",
+              "name": "chatInput",
+              "value": "={{ $json.data || $json.text || JSON.stringify($json.body?.workflow || $json.body || $json, null, 2) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "fa1f2c56-9bb7-4e52-ad3c-2f357ab5bd89",
+      "name": "Preparar Datos",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2304,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "hasOutputParser": true
+      },
+      "id": "279e9bd8-daae-4d3b-84a0-0e532c14cf2e",
+      "name": "LLM Chain Documentador",
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.5,
+      "position": [
+        2528,
+        576
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000
+    },
+    {
+      "parameters": {
+        "jsCode": "const newItems = [];\n\nfunction clean(str) {\n  if (!str) return '';\n  return str.toString()\n    .replace(/[\\u{1F600}-\\u{1F6FF}]/gu, '')\n    .replace(/[\\u{2700}-\\u{27BF}]/gu, '')\n    .replace(/[✔️🔴⚠️🟢⚪🟡]/g, '')\n    .trim();\n}\n\nfor (const item of items) {\n    let output = item.json.output || item.json;\n    if (typeof output !== 'object' || output === null) output = {};\n\n    if (output['Status']) {\n        let s = clean(output['Status']);\n        const valid = ['Por Documentar', 'Pendiente', 'En Proceso'];\n        if (s === 'Activo' || s === 'Active') s = 'En Proceso';\n        if (!valid.includes(s)) s = 'Por Documentar';\n        output['Status'] = s;\n    }\n\n    if (output['Prioridad']) output['Prioridad'] = clean(output['Prioridad']);\n    if (output['Autor'] === 'IA') output['Autor'] = 'Equipo AI-OPS';\n\n    output._valid = (output['Nombre del Flujo'] && output['Nombre del Flujo'].length > 0);\n\n    const markdown = output['Contenido Markdown'] || '';\n    const MAX_LENGTH = 1800;\n    const chunks = [];\n\n    if (markdown.length > 0) {\n        const paragraphs = markdown.split('\\n');\n        let currentChunk = '';\n        for (const para of paragraphs) {\n            if ((currentChunk.length + para.length + 1) > MAX_LENGTH) {\n                if (currentChunk.trim().length > 0) { chunks.push(currentChunk); currentChunk = ''; }\n                if (para.length > MAX_LENGTH) {\n                    let temp = para;\n                    while (temp.length > 0) { chunks.push(temp.substring(0, MAX_LENGTH)); temp = temp.substring(MAX_LENGTH); }\n                } else { currentChunk = para + '\\n'; }\n            } else { currentChunk += para + '\\n'; }\n        }\n        if (currentChunk.trim().length > 0) chunks.push(currentChunk);\n    }\n    \n    for (let i = 0; i < 8; i++) {\n        output[`md_part_${i+1}`] = chunks[i] || ''; \n    }\n\n    newItems.push({json: {output: output}});\n}\n\nreturn newItems;"
+      },
+      "id": "4ae0b29d-7ecf-4012-bcf1-533498939044",
+      "name": "Sanitizar Salida IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "validate-flag",
+              "leftValue": "={{ $json.output._valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "08596b42-8e14-44cb-baa1-46d03da6abc9",
+      "name": "Validar Output LLM",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3184,
+        576
+      ]
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "error-log",
+              "name": "error_message",
+              "value": "El LLM no generó un 'Nombre del Flujo' válido. Output vacío.",
+              "type": "string"
+            },
+            {
+              "id": "error-timestamp",
+              "name": "timestamp",
+              "value": "={{ new Date().toISOString() }}",
+              "type": "string"
+            },
+            {
+              "id": "raw-output",
+              "name": "raw_output",
+              "value": "={{ JSON.stringify($json) }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "4d21687b-b6ad-482e-b3ff-e1cad609b910",
+      "name": "Log Error - Output Inválido",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3536,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"Nombre del Flujo\": \"Mi Flujo de Ejemplo\",\n  \"Resumen\": \"Este flujo automatiza el proceso de documentación de workflows.\",\n  \"Trigger\": \"Webhook POST en /documentar-flujo\",\n  \"Herramientas / Nodos Clave\": \"Webhook, Google Gemini, Notion, Set\",\n  \"Status\": \"Por Documentar\",\n  \"Prioridad\": \"Alta\",\n  \"Proyecto\": \"Automatizaciones N8N\",\n  \"Responsable\": \"Daniel Gatica\",\n  \"Autor\": \"Equipo AI-OPS\",\n  \"Versión Actual\": \"1.0\",\n  \"Contenido Markdown\": \"## Descripcion General\\nEste flujo automatiza...\\n\\n## Trigger\\nWebhook POST...\"\n}",
+        "autoFix": true
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        2592,
+        928
+      ],
+      "id": "c0f6ff03-317e-46d0-8b18-5d0bf663e42f",
+      "name": "Structured Output Parser1"
+    },
+    {
+      "parameters": {
+        "resource": "databasePage",
+        "databaseId": {
+          "__rl": true,
+          "value": "434d19be-8d6e-4733-82ef-af3c36a2d561",
+          "mode": "id"
+        },
+        "title": "={{ $json.output[\"Nombre del Flujo\"] }}",
+        "propertiesUi": {
+          "propertyValues": [
+            {
+              "key": "Resumen|rich_text",
+              "textContent": "={{ $json.output.Resumen }}"
+            },
+            {
+              "key": "Trigger|rich_text",
+              "textContent": "={{ $json.output.Trigger }}"
+            },
+            {
+              "key": "Herramientas / Nodos Clave|rich_text",
+              "textContent": "={{ $json.output[\"Herramientas / Nodos Clave\"] }}"
+            },
+            {
+              "key": "Status|status",
+              "statusValue": "={{ $json.output.Status }}"
+            },
+            {
+              "key": "Prioridad|select",
+              "selectValue": "={{ $json.output.Prioridad }}"
+            },
+            {
+              "key": "Proyecto|select",
+              "selectValue": "={{ $json.output.Proyecto }}"
+            },
+            {
+              "key": "Responsable|select",
+              "selectValue": "={{ $json.output.Responsable }}"
+            },
+            {
+              "key": "Autor|select",
+              "selectValue": "={{ $json.output.Autor }}"
+            },
+            {
+              "key": "Versión Actual|rich_text",
+              "textContent": "={{ $json.output[\"Versión Actual\"] }}"
+            }
+          ]
+        },
+        "blockUi": {
+          "blockValues": [
+            {
+              "textContent": "={{ $json.output.md_part_1 }}"
+            },
+            {
+              "textContent": "={{ $json.output.md_part_2 }}"
+            },
+            {
+              "textContent": "={{ $json.output.md_part_3 }}"
+            },
+            {
+              "textContent": "={{ $json.output.md_part_4 }}"
+            },
+            {
+              "textContent": "={{ $json.output.md_part_5 }}"
+            },
+            {
+              "textContent": "={{ $json.output.md_part_6 }}"
+            },
+            {
+              "textContent": "={{ $json.output.md_part_7 }}"
+            },
+            {
+              "textContent": "={{ $json.output.md_part_8 }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "a0d281ca-49c0-4b38-b9df-c99d0ebf1c53",
+      "name": "Crear Página en Notion1",
+      "type": "n8n-nodes-base.notion",
+      "typeVersion": 2.2,
+      "position": [
+        3440,
+        560
+      ],
+      "credentials": {
+        "notionApi": {
+          "id": "cXf4noyhYNzegrvY",
+          "name": "Notion account 4"
+        }
+      }
+    }
+  ],
+  "pinData": {
+    "Manual Trigger": [
+      {
+        "json": {
+          "name": "Documentador Automático de Flujos N8N → Notion (Vercel Version)",
+          "nodes": [
+            {
+              "parameters": {
+                "modelName": "models/gemini-2.5-pro",
+                "options": {}
+              },
+              "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+              "typeVersion": 1,
+              "position": [
+                2144,
+                528
+              ],
+              "id": "cbfece17-b013-4524-8f93-d624fc5ce878",
+              "name": "Google Gemini Chat Model",
+              "credentials": {
+                "googlePalmApi": {
+                  "id": "cx3UREEDlLzWGGNg",
+                  "name": "Google Gemini(PaLM) Api account"
+                }
+              }
+            },
+            {
+              "parameters": {
+                "httpMethod": "POST",
+                "path": "documentar-flujo-n8n",
+                "responseMode": "responseNode",
+                "options": {}
+              },
+              "id": "0bca2cbd-243d-497e-84bb-390da7a9f827",
+              "name": "Webhook - Recibir JSON",
+              "type": "n8n-nodes-base.webhook",
+              "typeVersion": 2,
+              "position": [
+                1552,
+                352
+              ],
+              "webhookId": "auto-doc-n8n"
+            },
+            {
+              "parameters": {
+                "assignments": {
+                  "assignments": [
+                    {
+                      "id": "json-workflow",
+                      "name": "chatInput",
+                      "value": "={{ JSON.stringify($json.body.workflow || $json.workflow || $json, null, 2) }}",
+                      "type": "string"
+                    },
+                    {
+                      "id": "workflow-name",
+                      "name": "workflowName",
+                      "value": "={{ ($json.body.workflow?.name || $json.workflow?.name || $json.name || 'Flujo sin nombre') }}",
+                      "type": "string"
+                    }
+                  ]
+                },
+                "options": {}
+              },
+              "id": "b7ab3fa4-7fa7-4340-9868-6ad743bd30ed",
+              "name": "Extraer JSON del Workflow",
+              "type": "n8n-nodes-base.set",
+              "typeVersion": 3.4,
+              "position": [
+                1712,
+                352
+              ]
+            },
+            {
+              "parameters": {
+                "prompt": "Eres un experto documentador técnico de flujos N8N (Senior Level) y arquitecto de datos. Tu objetivo es analizar el JSON de un workflow de n8n y generar una respuesta estructurada en formato JSON válido para ser ingestado por una base de datos (Notion).\n\nEste es el JSON que debes analizar:\n{{chatInput}}\n\n══════════════════════════════════════\nINSTRUCCIÓN PRINCIPAL\n══════════════════════════════════════\nTu salida debe ser ÚNICA y EXCLUSIVAMENTE un objeto JSON válido. No incluyas bloques de código markdown (```json) alrededor, ni texto introductorio. Solo el objeto JSON raw.\n\n══════════════════════════════════════\nESTRUCTURA DEL JSON DE SALIDA\n══════════════════════════════════════\nDebes rellenar la siguiente estructura:\n\n{\n  \"nombre_flujo\": \"[Extraer del campo 'name' del input]\",\n  \"resumen\": \"[Resumen de 2-3 líneas del objetivo del flujo]\",\n  \"trigger\": \"[Manual/Webhook/Cron/Evento]\",\n  \"herramientas_clave\": \"[Lista separada por comas de los nodos principales. Ej: Slack, Google Sheets, HTTP Request]\",\n  \"status\": \"[Permitidos: \\\"✔️ Documentado\\\", \\\"⚠️ Pendiente\\\", \\\"⚙️ En Proceso\\\"]\",\n  \"prioridad\": \"[Permitidos: \\\"🔴 Alta\\\", \\\"🟡 Media\\\", \\\"⚪ Baja\\\"]\",\n  \"proyecto\": \"[Permitidos: \\\"Venture Lab\\\", \\\"Automatizaciones N8N\\\", \\\"Landing Viretec\\\", \\\"Formación Emiliano\\\", \\\"Otro\\\"]\",\n  \"responsable\": \"[Permitidos: \\\"Daniel Gatica\\\", \\\"Emiliano Saucedo\\\"]\",\n  \"autor\": \"[Permitidos: \\\"IA\\\", \\\"Daniel Gatica\\\", \\\"Emiliano Saucedo\\\", \\\"Equipo AI-OPS\\\"]\",\n  \"flujo_al_que_pertenece\": \"[Texto simple con el nombre del flujo padre, si aplica]\",\n  \"version_actual\": \"v1.0\",\n  \"contenido_markdown\": \"[AQUÍ VA TODA LA DOCUMENTACIÓN DETALLADA CON FORMATO]\"\n}\n\n══════════════════════════════════════\nREGLAS PARA EL CAMPO \"contenido_markdown\"\n══════════════════════════════════════\nEl valor de este campo es una cadena de texto larga que debe contener la documentación completa formateada en Markdown. \n\nIMPORTANTE TÉCNICO:\n- Al estar dentro de un JSON, todos los saltos de línea deben ser `\\n`.\n- Las comillas dobles dentro del texto deben escaparse `\\\"`.\n- El formato interno debe seguir las convenciones de Markdown para Notion (títulos, negritas, listas, etc.).\n\nEJEMPLO de \"contenido_markdown\":\n\"# 📄 Resumen del Flujo\\nEste workflow automatiza la creación de minutas post-reunión...\\n\\n## 🚦 Trigger\\nSe dispara manualmente después de cada reunión...\\n\\n## 🛠️ Pasos Clave\\n1. **Recepción de Datos**: Espera un JSON con...\\n2. **Procesamiento con IA**: Utiliza Gemini para...\\n3. **Creación en Notion**: Genera una nueva página en la base de datos...\\n\"",
+                "inputValues": {
+                  "values": [
+                    {
+                      "key": "chatInput",
+                      "value": "={{$json.chatInput}}"
+                    }
+                  ]
+                },
+                "options": {}
+              },
+              "id": "b76f46ef-ed96-44aa-b027-9e9ea4965a2d",
+              "name": "LLM Chain Documentador",
+              "type": "@n8n/n8n-nodes-langchain.chainLlm",
+              "typeVersion": 1.5,
+              "position": [
+                2208,
+                336
+              ]
+            },
+            {
+              "parameters": {
+                "assignments": {
+                  "assignments": [
+                    {
+                      "id": "parse-agent-output",
+                      "name": "output",
+                      "value": "={{ $json.json }}",
+                      "type": "object"
+                    }
+                  ]
+                },
+                "options": {}
+              },
+              "id": "f8c9e3b2-a1d2-4e5f-9b1c-6d7a8f9e2b1a",
+              "name": "Obtener JSON de la Cadena",
+              "type": "n8n-nodes-base.set",
+              "typeVersion": 3.4,
+              "position": [
+                2400,
+                336
+              ]
+            },
+            {
+              "parameters": {
+                "resource": "databasePage",
+                "databaseId": {
+                  "__rl": true,
+                  "value": "434d19be-8d6e-4733-82ef-af3c36a2d561",
+                  "mode": "id"
+                },
+                "title": "={{ $json.output.nombre_flujo }}",
+                "propertiesUi": {
+                  "propertyValues": [
+                    {
+                      "key": "Resumen|rich_text",
+                      "textContent": "={{ $json.output.resumen }}"
+                    },
+                    {
+                      "key": "Status|status",
+                      "statusValue": "={{ $json.output.status }}"
+                    },
+                    {
+                      "key": "Prioridad|select",
+                      "selectValue": "={{ $json.output.prioridad }}"
+                    },
+                    {
+                      "key": "Trigger|rich_text",
+                      "textContent": "={{ $json.output.trigger }}"
+                    },
+                    {
+                      "key": "Proyecto|select",
+                      "selectValue": "={{ $json.output.proyecto }}"
+                    },
+                    {
+                      "key": "Responsable|select",
+                      "selectValue": "={{ $json.output.responsable }}"
+                    },
+                    {
+                      "key": "Autor|select",
+                      "selectValue": "={{ $json.output.autor }}"
+                    },
+                    {
+                      "key": "Herramientas / Nodos Clave|rich_text",
+                      "textContent": "={{ $json.output.herramientas_clave }}"
+                    },
+                    {
+                      "key": "Versión Actual|rich_text",
+                      "textContent": "={{ $json.output.version_actual }}"
+                    },
+                    {
+                      "key": "Flujo al que pertenece|rich_text",
+                      "textContent": "={{ $json.output.flujo_al_que_pertenece }}"
+                    }
+                  ]
+                },
+                "blockUi": {
+                  "blockValues": [
+                    {
+                      "textContent": "={{ $json.output.contenido_markdown }}"
+                    }
+                  ]
+                },
+                "options": {}
+              },
+              "id": "bdc141c2-7cc3-46a9-8874-64229fd4f3db",
+              "name": "Crear Página en Notion",
+              "type": "n8n-nodes-base.notion",
+              "typeVersion": 2.2,
+              "position": [
+                2560,
+                336
+              ],
+              "credentials": {
+                "notionApi": {
+                  "id": "cXf4noyhYNzegrvY",
+                  "name": "Notion account 4"
+                }
+              }
+            },
+            {
+              "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ {\n  \"success\": true,\n  \"message\": \"Flujo documentado exitosamente en Notion\",\n  \"workflow_name\": $json.title,\n  \"notion_page_id\": $json.id,\n  \"notion_url\": $json.url,\n  \"timestamp\": new Date().toISOString()\n} }}",
+                "options": {}
+              },
+              "id": "00b3a2db-7b73-4f7f-887b-ffcbed38e522",
+              "name": "Responder al Webhook",
+              "type": "n8n-nodes-base.respondToWebhook",
+              "typeVersion": 1.1,
+              "position": [
+                2784,
+                336
+              ]
+            },
+            {
+              "parameters": {
+                "conditions": {
+                  "string": [
+                    {
+                      "value1": "={{ $json.chatInput }}",
+                      "operation": "isNotEmpty"
+                    }
+                  ]
+                },
+                "options": {}
+              },
+              "id": "acb2a1c0-13d9-44e8-9cb8-98a60c76b268",
+              "name": "Validar JSON Recibido",
+              "type": "n8n-nodes-base.if",
+              "typeVersion": 2,
+              "position": [
+                1856,
+                352
+              ]
+            },
+            {
+              "parameters": {
+                "respondWith": "json",
+                "responseBody": "={{ {\n  \"success\": false,\n  \"error\": \"No se recibió un JSON válido del workflow\",\n  \"message\": \"Por favor envía el JSON exportado de N8N en el body de la petición\",\n  \"timestamp\": new Date().toISOString()\n} }}",
+                "options": {
+                  "responseCode": 400
+                }
+              },
+              "id": "e77f053c-01cd-4f25-be74-389c59cb8b54",
+              "name": "Error - JSON Inválido",
+              "type": "n8n-nodes-base.respondToWebhook",
+              "typeVersion": 1.1,
+              "position": [
+                1920,
+                656
+              ]
+            },
+            {
+              "parameters": {
+                "jsonSchemaExample": "{\n    \"type\": \"object\",\n    \"properties\": {\n      \"nombre_flujo\": {\"type\": \"string\"},\n      \"resumen\": {\"type\": \"string\"},\n      \"trigger\": {\"type\": \"string\"},\n      \"herramientas_clave\": {\"type\": \"string\"},\n      \"status\": {\n        \"type\": \"string\",\n        \"enum\": [\"✔️ Documentado\", \"⚠️ Pendiente\", \"⚙️ En Proceso\"]\n      },\n      \"prioridad\": {\n        \"type\": \"string\",\n        \"enum\": [\"🔴 Alta\", \"🟡 Media\", \"⚪ Baja\"]\n      },\n      \"proyecto\": {\n        \"type\": \"string\",\n        \"enum\": [\"Venture Lab\", \"Automatizaciones N8N\", \"Landing Viretec\", \"Formación Emiliano\", \"Otro\"]\n      },\n      \"responsable\": {\n        \"type\": \"string\",\n        \"enum\": [\"Daniel Gatica\", \"Emiliano Saucedo\"]\n      },\n      \"autor\": {\n        \"type\": \"string\",\n        \"enum\": [\"IA\", \"Daniel Gatica\", \"Emiliano Saucedo\", \"Equipo AI-OPS\"]\n      },\n      \"flujo_al_que_pertenece\": {\"type\": \"string\"},\n      \"version_actual\": {\"type\": \"string\"},\n      \"contenido_markdown\": {\"type\": \"string\"}\n    },\n    \"required\": [\"nombre_flujo\", \"status\", \"prioridad\", \"proyecto\", \"responsable\", \"autor\", \"version_actual\", \"contenido_markdown\"]\n  }",
+                "autoFix": true
+              },
+              "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+              "typeVersion": 1.3,
+              "position": [
+                2272,
+                528
+              ],
+              "id": "17512d31-bf6e-45ee-ac84-497d1f2f334d",
+              "name": "Structured Output Parser"
+            },
+            {
+              "parameters": {
+                "modelName": "models/gemini-2.5-pro",
+                "options": {}
+              },
+              "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+              "typeVersion": 1,
+              "position": [
+                2272,
+                736
+              ],
+              "id": "7d3b448f-118b-43e2-bd13-4ed9d686c40e",
+              "name": "Google Gemini Chat Model1",
+              "credentials": {
+                "googlePalmApi": {
+                  "id": "cx3UREEDlLzWGGNg",
+                  "name": "Google Gemini(PaLM) Api account"
+                }
+              }
+            },
+            {
+              "parameters": {
+                "amount": 10
+              },
+              "type": "n8n-nodes-base.wait",
+              "typeVersion": 1.1,
+              "position": [
+                2032,
+                336
+              ],
+              "id": "1973a3d5-ff59-4f7d-975a-120f72f510cb",
+              "name": "Wait",
+              "webhookId": "8c8933ef-667c-4e94-b149-2c665d51b389"
+            }
+          ],
+          "pinData": {},
+          "connections": {
+            "Google Gemini Chat Model": {
+              "ai_languageModel": [
+                [
+                  {
+                    "node": "LLM Chain Documentador",
+                    "type": "ai_languageModel",
+                    "index": 0
+                  }
+                ]
+              ]
+            },
+            "Webhook - Recibir JSON": {
+              "main": [
+                [
+                  {
+                    "node": "Extraer JSON del Workflow",
+                    "type": "main",
+                    "index": 0
+                  }
+                ]
+              ]
+            },
+            "Extraer JSON del Workflow": {
+              "main": [
+                [
+                  {
+                    "node": "Validar JSON Recibido",
+                    "type": "main",
+                    "index": 0
+                  }
+                ]
+              ]
+            },
+            "Validar JSON Recibido": {
+              "main": [
+                [
+                  {
+                    "node": "Wait",
+                    "type": "main",
+                    "index": 0
+                  }
+                ],
+                [
+                  {
+                    "node": "Error - JSON Inválido",
+                    "type": "main",
+                    "index": 0
+                  }
+                ]
+              ]
+            },
+            "LLM Chain Documentador": {
+              "main": [
+                [
+                  {
+                    "node": "Obtener JSON de la Cadena",
+                    "type": "main",
+                    "index": 0
+                  }
+                ]
+              ]
+            },
+            "Obtener JSON de la Cadena": {
+              "main": [
+                [
+                  {
+                    "node": "Crear Página en Notion",
+                    "type": "main",
+                    "index": 0
+                  }
+                ]
+              ]
+            },
+            "Crear Página en Notion": {
+              "main": [
+                [
+                  {
+                    "node": "Responder al Webhook",
+                    "type": "main",
+                    "index": 0
+                  }
+                ]
+              ]
+            },
+            "Structured Output Parser": {
+              "ai_outputParser": [
+                [
+                  {
+                    "node": "LLM Chain Documentador",
+                    "type": "ai_outputParser",
+                    "index": 0
+                  }
+                ]
+              ]
+            },
+            "Google Gemini Chat Model1": {
+              "ai_languageModel": [
+                [
+                  {
+                    "node": "Structured Output Parser",
+                    "type": "ai_languageModel",
+                    "index": 0
+                  }
+                ]
+              ]
+            },
+            "Wait": {
+              "main": [
+                [
+                  {
+                    "node": "LLM Chain Documentador",
+                    "type": "main",
+                    "index": 0
+                  }
+                ]
+              ]
+            }
+          },
+          "active": true,
+          "settings": {
+            "executionOrder": "v1",
+            "binaryMode": "separate",
+            "availableInMCP": false
+          },
+          "versionId": "de61d861-6f7a-48d9-96fc-ba63dced82c6",
+          "meta": {
+            "templateCredsSetupCompleted": true,
+            "instanceId": "a5a357ed8accb83b366d8c41e886bed68cc97efd61db0cf8ba15835ee3643bc6"
+          },
+          "id": "5PFwnoJvaChumCkHN1UmV",
+          "tags": [
+            {
+              "updatedAt": "2025-11-11T15:10:37.488Z",
+              "createdAt": "2025-11-11T15:10:37.488Z",
+              "id": "YL70JW1QUksWNwZx",
+              "name": "AI"
+            },
+            {
+              "updatedAt": "2025-11-11T14:59:02.957Z",
+              "createdAt": "2025-11-11T14:59:02.957Z",
+              "id": "froKlbc3SsEZFCNQ",
+              "name": "Notion"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "LLM Chain Documentador",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Gemini Chat Model4": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Structured Output Parser1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive Trigger": {
+      "main": [
+        [
+          {
+            "node": "Google Drive - Descargar JSON",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Google Drive - Descargar JSON": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Preparar Datos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar Datos": {
+      "main": [
+        [
+          {
+            "node": "LLM Chain Documentador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitizar Salida IA": {
+      "main": [
+        [
+          {
+            "node": "Validar Output LLM",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LLM Chain Documentador": {
+      "main": [
+        [
+          {
+            "node": "Sanitizar Salida IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar Output LLM": {
+      "main": [
+        [
+          {
+            "node": "Crear Página en Notion1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Error - Output Inválido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser1": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "LLM Chain Documentador",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "7f7fff25-3337-48f3-bc88-9d216d42a972",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "a5a357ed8accb83b366d8c41e886bed68cc97efd61db0cf8ba15835ee3643bc6"
+  },
+  "id": "5PFwnoJvaChumCkHN1UmV",
+  "tags": [
+    {
+      "updatedAt": "2026-02-13T14:35:18.919Z",
+      "createdAt": "2026-02-13T14:35:18.919Z",
+      "id": "JbscTV3ASS8cF4oc",
+      "name": "Documentación"
+    },
+    {
+      "updatedAt": "2025-11-11T15:10:37.488Z",
+      "createdAt": "2025-11-11T15:10:37.488Z",
+      "id": "YL70JW1QUksWNwZx",
+      "name": "AI Agent"
+    },
+    {
+      "updatedAt": "2025-11-11T14:59:02.957Z",
+      "createdAt": "2025-11-11T14:59:02.957Z",
+      "id": "froKlbc3SsEZFCNQ",
+      "name": "Notion"
+    },
+    {
+      "updatedAt": "2026-02-13T00:09:54.218Z",
+      "createdAt": "2026-02-13T00:09:54.218Z",
+      "id": "zKF5F0gpY0bitSL2",
+      "name": "AI"
+    }
+  ]
+}
